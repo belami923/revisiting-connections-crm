@@ -1,0 +1,213 @@
+{% extends "base.html" %}
+{% block title %}{{ contact.display_name }} - Reconnect{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/contacts">&larr; All Contacts</a>
+</div>
+
+<div class="page-header">
+    <h1 class="page-title">{{ contact.display_name }}</h1>
+    <div class="identifiers" style="margin-top: 8px;">
+        {% for ident in contact.identifiers %}
+        <span class="identifier-badge">{{ ident.identifier_type }}: {{ ident.identifier_value }}</span>
+        {% endfor %}
+    </div>
+    {% if contact.linkedin_url or contact.twitter_url %}
+    <div class="social-links" style="margin-top: 8px;">
+        {% if contact.linkedin_url %}
+        <a href="{{ contact.linkedin_url }}" target="_blank" class="social-link linkedin" title="LinkedIn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+            LinkedIn
+        </a>
+        {% endif %}
+        {% if contact.twitter_url %}
+        <a href="{{ contact.twitter_url }}" target="_blank" class="social-link twitter" title="X / Twitter">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+            X
+        </a>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+
+{% if contact.scores %}
+<div class="info-grid">
+    <div class="info-card">
+        <div class="info-card-header">Metrics</div>
+        <div class="prop-row">
+            <span class="prop-label">Total Interactions</span>
+            <span class="prop-value">{{ contact.scores.total_interactions }}</span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Last Contact</span>
+            <span class="prop-value">{{ contact.scores.last_interaction_at or "Never" }}
+                {% if contact.scores.days_since_last %}
+                ({{ contact.scores.days_since_last }} days ago)
+                {% endif %}
+            </span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Peak Density</span>
+            <span class="prop-value">{{ "%.1f"|format(contact.scores.peak_density) }} interactions/week</span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Peak Period</span>
+            <span class="prop-value">{{ (contact.scores.peak_start or "")[:10] }} to {{ (contact.scores.peak_end or "")[:10] }}</span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Decay Score</span>
+            <span class="prop-value">{{ "%.2f"|format(contact.scores.decay_score) }}</span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Suggestion Score</span>
+            <span class="prop-value">{{ "%.2f"|format(contact.scores.suggestion_score) }}</span>
+        </div>
+    </div>
+
+    <div class="info-card">
+        <div class="info-card-header">Pattern Matches</div>
+        {% if contact.patterns %}
+        <ul class="pattern-list">
+            {% for p in contact.patterns %}
+            <li class="pattern-item">
+                <div class="pattern-rule">{{ p.rule_id }} ({{ "%.1f"|format(p.score_contribution) }})</div>
+                <div class="pattern-narrative">{{ p.narrative }}</div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p style="font-size: 14px; color: var(--text-secondary); padding: 12px 0;">No patterns detected for this contact.</p>
+        {% endif %}
+    </div>
+</div>
+{% endif %}
+
+<!-- Social Profiles -->
+<div class="section">
+    <h2>Social Profiles</h2>
+    <form method="post" action="/contacts/{{ contact.id }}/socials" style="display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap;">
+        <div style="flex: 1; min-width: 200px;">
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">LinkedIn URL</label>
+            <input type="url" name="linkedin_url" value="{{ contact.linkedin_url or '' }}" placeholder="https://linkedin.com/in/..." class="search-input" style="width: 100%;">
+        </div>
+        <div style="flex: 1; min-width: 200px;">
+            <label style="font-size: 12px; color: var(--text-secondary); display: block; margin-bottom: 4px;">X / Twitter URL</label>
+            <input type="url" name="twitter_url" value="{{ contact.twitter_url or '' }}" placeholder="https://x.com/..." class="search-input" style="width: 100%;">
+        </div>
+        <button type="submit" class="btn">Save</button>
+    </form>
+</div>
+
+<!-- Lists -->
+<div class="section">
+    <div class="section-header">
+        <h2>Lists</h2>
+    </div>
+    {% if contact.lists %}
+    <div class="identifiers" style="margin-bottom: 12px;">
+        {% for lst in contact.lists %}
+        <a href="/lists/{{ lst.id }}" class="identifier-badge" style="text-decoration: none;">{{ lst.name }}</a>
+        {% endfor %}
+    </div>
+    {% else %}
+    <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 12px;">Not in any lists.</p>
+    {% endif %}
+    {% if contact.available_lists %}
+    <form method="post" action="/lists/0/add" style="display: flex; gap: 8px; align-items: center;" id="add-to-list-form">
+        <select name="list_id" class="search-input" style="flex: 1;" required onchange="this.form.action='/lists/' + this.value + '/add'">
+            <option value="">Add to list...</option>
+            {% for lst in contact.available_lists %}
+            <option value="{{ lst.id }}">{{ lst.name }}</option>
+            {% endfor %}
+        </select>
+        <input type="hidden" name="contact_id" value="{{ contact.id }}">
+        <button type="submit" class="btn">Add</button>
+    </form>
+    {% endif %}
+</div>
+
+{% if contact.yearly_stats %}
+<div class="section">
+    <h2>Interactions by Year</h2>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Year</th>
+                <th>Type</th>
+                <th>Count</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for stat in contact.yearly_stats %}
+            <tr>
+                <td>{{ stat.year }}</td>
+                <td>{{ stat.interaction_type }}</td>
+                <td>{{ stat.count }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+{% if contact.suggestion_history %}
+<div class="section">
+    <h2>Suggestion History</h2>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Month</th>
+                <th>Rank</th>
+                <th>Feedback</th>
+                <th>Narrative</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for s in contact.suggestion_history %}
+            <tr>
+                <td>{{ s.month_label }}</td>
+                <td>#{{ s.rank }}</td>
+                <td>
+                    {% if s.feedback == "yes" %}
+                    <span class="feedback-badge yes">Reaching out</span>
+                    {% elif s.feedback == "no" %}
+                    <span class="feedback-badge no">Skipped</span>
+                    {% else %}
+                    <span style="color: var(--text-tertiary); font-size: 13px;">Pending</span>
+                    {% endif %}
+                </td>
+                <td style="font-size: 13px; color: var(--text-secondary);">{{ s.primary_narrative or "-" }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
+
+<div class="section">
+    <h2>Recent Interactions</h2>
+    {% if contact.interactions %}
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Source</th>
+                <th>Type</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for ix in contact.interactions %}
+            <tr>
+                <td>{{ ix.occurred_at[:16] }}</td>
+                <td>{{ ix.source }}</td>
+                <td>{{ ix.interaction_type }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% else %}
+    <p style="font-size: 14px; color: var(--text-secondary);">No interactions recorded.</p>
+    {% endif %}
+</div>
+{% endblock %}

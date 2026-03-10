@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Reconnect - Lists{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div class="section-header">
+        <div>
+            <h1 class="page-title">Lists</h1>
+            <p class="page-subtitle">{{ total }} list{{ "s" if total != 1 else "" }}</p>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <form method="post" action="/lists/auto-generate">
+                <button type="submit" class="btn">Auto-suggest lists</button>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- Create new list form -->
+<div class="create-list-form" style="margin-bottom: 28px;">
+    <form method="post" action="/lists/create" style="display: flex; gap: 8px; align-items: flex-end;">
+        <div style="flex: 1;">
+            <input type="text" name="name" placeholder="New list name..." required class="search-input" style="width: 100%;">
+        </div>
+        <div style="flex: 1;">
+            <input type="text" name="description" placeholder="Description (optional)" class="search-input" style="width: 100%;">
+        </div>
+        <button type="submit" class="btn btn-primary">Create list</button>
+    </form>
+</div>
+
+{% if lists %}
+<div class="lists-grid">
+    {% for lst in lists %}
+    <a href="/lists/{{ lst.id }}" class="list-card">
+        <div class="list-card-header">
+            <span class="list-card-name">{{ lst.name }}</span>
+            {% if lst.is_auto %}
+            <span class="badge-auto">Auto</span>
+            {% endif %}
+        </div>
+        {% if lst.description %}
+        <p class="list-card-desc">{{ lst.description }}</p>
+        {% endif %}
+        <div class="list-card-meta">
+            <span>{{ lst.member_count }} member{{ "s" if lst.member_count != 1 else "" }}</span>
+            {% if lst.auto_rule %}
+            <span>&middot;</span>
+            <span>{{ lst.auto_rule }}</span>
+            {% endif %}
+        </div>
+    </a>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No lists yet</h3>
+    <p>Create a custom list above or let the system auto-suggest lists based on your interaction patterns.</p>
+    <div class="empty-actions">
+        <form method="post" action="/lists/auto-generate">
+            <button type="submit" class="btn btn-primary">Auto-suggest lists</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

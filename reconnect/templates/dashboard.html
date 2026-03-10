@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Reconnect - Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">People to Reconnect With</h1>
+    <p class="page-subtitle">{{ month_label }} &mdash;
+    {% if suggestions %}
+        {{ responded }}/{{ total }} reviewed
+        {% if yes_count %} &middot; {{ yes_count }} reaching out{% endif %}
+        {% if no_count %} &middot; {{ no_count }} skipped{% endif %}
+    {% else %}
+        No suggestions yet
+    {% endif %}
+    </p>
+</div>
+
+{% if suggestions %}
+<div class="progress-bar">
+    <div class="progress-fill" style="width: {{ (responded / total * 100) if total else 0 }}%"></div>
+</div>
+
+<div class="suggestions-grid">
+    {% for s in suggestions %}
+    <div class="suggestion-card {% if s.feedback == 'yes' %}card-yes{% elif s.feedback == 'no' %}card-no{% endif %}">
+        <div class="card-header">
+            <div class="card-rank">#{{ s.rank }}</div>
+            <div class="card-name">
+                <a href="/contacts/{{ s.contact_id }}">{{ s.display_name }}</a>
+            </div>
+        </div>
+
+        {% if s.primary_narrative %}
+        <div class="narrative">
+            {{ s.primary_narrative }}
+        </div>
+        {% endif %}
+
+        <div class="card-meta">
+            <span>{{ s.total_interactions or 0 }} interactions</span>
+            <span>&middot;</span>
+            <span>Last: {{ s.last_interaction_at[:10] if s.last_interaction_at else "unknown" }}
+                {% if s.days_since_last %}({{ s.days_since_last }}d ago){% endif %}
+            </span>
+        </div>
+
+        <div class="identifiers">
+            {% for ident in s.identifiers %}
+            <span class="identifier-badge">{{ ident.identifier_value }}</span>
+            {% endfor %}
+            {% if s.linkedin_url or s.twitter_url %}
+            <span class="social-links-inline">
+                {% if s.linkedin_url %}
+                <a href="{{ s.linkedin_url }}" target="_blank" class="social-link-icon" title="LinkedIn">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
+                </a>
+                {% endif %}
+                {% if s.twitter_url %}
+                <a href="{{ s.twitter_url }}" target="_blank" class="social-link-icon" title="X / Twitter">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
+                </a>
+                {% endif %}
+            </span>
+            {% endif %}
+        </div>
+
+        {% if s.enrichment and (s.enrichment.recent_subjects or s.enrichment.recent_messages or s.enrichment.total_by_source) %}
+        <div class="card-context">
+            {% if s.enrichment.total_by_source %}
+            <div class="source-breakdown">
+                {% for src, cnt in s.enrichment.total_by_source.items() %}
+                <span class="source-badge">
+                    {% if src == 'imessage' %}{{ cnt }} texts{% elif src == 'gmail' %}{{ cnt }} emails{% elif src == 'calendar' %}{{ cnt }} meetings{% else %}{{ cnt }} {{ src }}{% endif %}
+                </span>
+                {% endfor %}
+            </div>
+            {% endif %}
+            {% if s.enrichment.recent_subjects %}
+            <div class="recent-subjects">
+                <span class="context-label">Emails:</span>
+                {{ s.enrichment.recent_subjects[:3]|join(", ") }}
+            </div>
+            {% endif %}
+            {% if s.enrichment.recent_messages %}
+            <div class="recent-messages">
+                {% for msg in s.enrichment.recent_messages[:3] %}
+                <div class="message-snippet">&ldquo;{{ msg }}&rdquo;</div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if s.all_narratives and s.all_narratives|length > 1 %}
+        <details class="more-patterns">
+            <summary>{{ s.all_narratives|length - 1 }} more pattern{{ "s" if s.all_narratives|length - 1 > 1 else "" }} detected</summary>
+            <ul>
+                {% for n in s.all_narratives[1:] %}
+                <li>{{ n.narrative }}</li>
+                {% endfor %}
+            </ul>
+        </details>
+        {% endif %}
+
+        <div class="card-actions">
+            {% if s.feedback %}
+                {% if s.feedback == "yes" %}
+                <span class="feedback-badge yes">Reaching out</span>
+                {% else %}
+                <span class="feedback-badge no">Skipped</span>
+                {% endif %}
+                <form method="post" action="/suggestions/{{ s.id }}/undo" style="display:inline;">
+                    <button type="submit" class="btn btn-undo">Undo</button>
+                </form>
+            {% else %}
+            <form method="post" action="/suggestions/{{ s.id }}/feedback" style="display:flex; gap:8px; flex:1;">
+                <button type="submit" name="feedback" value="yes" class="btn btn-primary btn-full">Reach out</button>
+                <button type="submit" name="feedback" value="no" class="btn btn-full">Skip</button>
+            </form>
+            {% endif %}
+        </div>
+
+        <form method="post" action="/suggestions/{{ s.id }}/notes" class="card-notes">
+            <textarea name="notes" rows="1" placeholder="Leave a note...">{{ s.notes or "" }}</textarea>
+            <button type="submit" class="btn">Save</button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="actions-bar">
+    <form method="post" action="/suggestions/regenerate">
+        <button type="submit" class="btn">Regenerate suggestions</button>
+    </form>
+</div>
+
+{% else %}
+<div class="empty-state">
+    <h3>No suggestions yet</h3>
+    <p>Sync your data first, then generate suggestions.</p>
+    <div class="empty-actions">
+        <a href="/sync" class="btn btn-primary">Go to Sync</a>
+        <form method="post" action="/suggestions/generate" style="display:inline;">
+            <button type="submit" class="btn">Generate suggestions</button>
+        </form>
+    </div>
+</div>
+{% endif %}
+{% endblock %}

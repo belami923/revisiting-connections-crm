@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}Reconnect - Contacts{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">All Contacts</h1>
+    <p class="page-subtitle">{{ total }} contacts</p>
+</div>
+
+<details class="add-contact-section">
+    <summary class="btn" style="margin-bottom: 12px; cursor: pointer; display: inline-flex;">+ Add Contact</summary>
+    <form method="post" action="/contacts/create" class="add-contact-form">
+        <input type="text" name="display_name" placeholder="Full name *" required class="search-input">
+        <input type="tel" name="phone" placeholder="Phone (optional)" class="search-input">
+        <input type="email" name="email" placeholder="Email (optional)" class="search-input">
+        <button type="submit" class="btn btn-primary">Create</button>
+    </form>
+</details>
+
+<form method="get" action="/contacts" class="search-bar">
+    <input type="search" name="q" placeholder="Search contacts..." value="{{ query }}" class="search-input">
+    <button type="submit" class="btn">Search</button>
+</form>
+
+{% if contacts %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Interactions</th>
+            <th>Last Contact</th>
+            <th>Days Ago</th>
+            <th>Score</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for c in contacts %}
+        <tr>
+            <td><a href="/contacts/{{ c.id }}">{{ c.display_name }}</a></td>
+            <td>{{ c.total_interactions or 0 }}</td>
+            <td>{{ (c.last_interaction_at or "")[:10] }}</td>
+            <td>{{ c.days_since_last or "-" }}</td>
+            <td>{{ "%.1f"|format(c.suggestion_score or 0) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <h3>No contacts found</h3>
+    <p>{% if query %}No contacts matching "{{ query }}".{% else %}Import contacts from the Sync page to get started.{% endif %}</p>
+    {% if not query %}
+    <div class="empty-actions">
+        <a href="/sync" class="btn btn-primary">Go to Sync</a>
+    </div>
+    {% endif %}
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+{% block title %}{{ list.name }} - Reconnect{% endblock %}
+
+{% block content %}
+<div class="breadcrumb">
+    <a href="/lists/">&larr; All Lists</a>
+</div>
+
+<div class="page-header">
+    <div class="section-header">
+        <div>
+            <h1 class="page-title">{{ list.name }}</h1>
+            {% if list.description %}
+            <p class="page-subtitle">{{ list.description }}</p>
+            {% endif %}
+        </div>
+        <div style="display: flex; gap: 8px;">
+            {% if list.is_auto %}
+            <form method="post" action="/lists/{{ list.id }}/keep">
+                <button type="submit" class="btn btn-accent">Keep this list</button>
+            </form>
+            {% endif %}
+            <form method="post" action="/lists/{{ list.id }}/delete" onsubmit="return confirm('Delete this list?')">
+                <button type="submit" class="btn" style="color: var(--red);">Delete</button>
+            </form>
+        </div>
+    </div>
+    {% if list.is_auto %}
+    <div style="margin-top: 8px;">
+        <span class="badge-auto">Auto-suggested</span>
+        <span style="font-size: 13px; color: var(--text-secondary); margin-left: 8px;">
+            This list was generated automatically. Click "Keep this list" to make it permanent.
+        </span>
+    </div>
+    {% endif %}
+</div>
+
+<!-- Add contact form -->
+{% if list.available_contacts %}
+<div style="margin-bottom: 24px;">
+    <form method="post" action="/lists/{{ list.id }}/add" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <input type="text" id="contact-filter" placeholder="Type to filter contacts..." class="search-input" style="flex: 1; min-width: 180px;">
+        <select name="contact_id" id="contact-select" class="search-input" style="flex: 1; min-width: 180px;" required>
+            <option value="">Add a contact...</option>
+            {% for c in list.available_contacts %}
+            <option value="{{ c.id }}">{{ c.display_name }}</option>
+            {% endfor %}
+        </select>
+        <button type="submit" class="btn btn-primary">Add</button>
+    </form>
+</div>
+<script>
+(function() {
+    var filter = document.getElementById('contact-filter');
+    var select = document.getElementById('contact-select');
+    var options = Array.from(select.options).slice(1); // skip the placeholder
+    filter.addEventListener('input', function() {
+        var q = this.value.toLowerCase();
+        // Remove all but placeholder
+        while (select.options.length > 1) select.remove(1);
+        options.forEach(function(opt) {
+            if (!q || opt.text.toLowerCase().indexOf(q) >= 0) {
+                select.add(opt.cloneNode(true));
+            }
+        });
+    });
+})();
+</script>
+{% endif %}
+
+{% if list.members %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Interactions</th>
+            <th>Last Contact</th>
+            <th>Days Ago</th>
+            <th>Score</th>
+            <th></th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for m in list.members %}
+        <tr>
+            <td><a href="/contacts/{{ m.id }}">{{ m.display_name }}</a></td>
+            <td>{{ m.total_interactions or 0 }}</td>
+            <td>{{ (m.last_interaction_at or "")[:10] }}</td>
+            <td>{{ m.days_since_last or "-" }}</td>
+            <td>{{ "%.1f"|format(m.suggestion_score or 0) }}</td>
+            <td>
+                <form method="post" action="/lists/{{ list.id }}/remove" style="display:inline;">
+                    <input type="hidden" name="contact_id" value="{{ m.id }}">
+                    <button type="submit" class="btn" style="padding: 2px 8px; font-size: 12px;">Remove</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <h3>No members</h3>
+    <p>Add contacts to this list using the dropdown above.</p>
+</div>
+{% endif %}
+{% endblock %}

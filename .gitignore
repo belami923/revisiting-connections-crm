@@ -1,0 +1,13 @@
+data/
+*.db
+__pycache__/
+*.pyc
+.env
+gmail_token.json
+gmail_credentials.json
+*.egg-info/
+dist/
+build/
+.venv/
+.claude/
+.DS_Store

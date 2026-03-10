@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}Reconnect - Settings{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Settings</h1>
+    <p class="page-subtitle">Configure scoring rules, interaction weights, and suggestion parameters</p>
+</div>
+
+<!-- Pattern Detection Rules -->
+<div class="section">
+    <h2>Pattern Detection Rules</h2>
+    <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">
+        These rules detect specific interaction patterns and generate narratives for why you should reconnect with someone.
+    </p>
+    <div class="rules-grid">
+        {% for rule in config.rules %}
+        <div class="rule-card {% if not rule.enabled %}disabled{% endif %}">
+            <div class="rule-card-header">
+                <div>
+                    <div class="rule-card-name">{{ rule.name }}</div>
+                    <div class="rule-card-id">{{ rule.rule_id }}</div>
+                </div>
+                <form method="post" action="/settings/rule/{{ rule.rule_id }}/toggle">
+                    <label class="toggle-switch">
+                        <input type="checkbox" {% if rule.enabled %}checked{% endif %} onchange="this.form.submit()">
+                        <span class="toggle-slider"></span>
+                    </label>
+                </form>
+            </div>
+            {% if rule.description %}
+            <p class="rule-card-desc">{{ rule.description }}</p>
+            {% endif %}
+            {% if rule.parameters and rule.enabled %}
+            <form method="post" action="/settings/rule/{{ rule.rule_id }}/params" class="param-grid">
+                {% for param_name, param in rule.parameters.items() %}
+                <div class="param-item">
+                    <label class="param-label" for="param_{{ rule.rule_id }}_{{ param_name }}">{{ param.description }}</label>
+                    <input type="number"
+                           id="param_{{ rule.rule_id }}_{{ param_name }}"
+                           name="param_{{ param_name }}"
+                           value="{{ param.current }}"
+                           step="{{ '0.01' if param.type == 'float' else '1' }}"
+                           class="param-input">
+                </div>
+                {% endfor %}
+                <button type="submit" class="btn" style="margin-top: 4px;">Save</button>
+            </form>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+
+<!-- Interaction Weights -->
+<div class="section">
+    <h2>Interaction Weights</h2>
+    <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">
+        How much each interaction type contributes to a contact's relationship score. Higher = more important.
+    </p>
+    <div class="info-card">
+        <form method="post" action="/settings/weights">
+            <table class="data-table">
+                <thead>
+                    <tr>
+                        <th>Interaction Type</th>
+                        <th>Weight</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for type_name, weight in config.weights.items() %}
+                    <tr>
+                        <td>{{ type_name.replace('_', ' ').title() }}</td>
+                        <td>
+                            <input type="number" name="weight_{{ type_name }}" value="{{ weight }}"
+                                   step="0.1" min="0" max="10" class="param-input" style="width: 80px;">
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+            <div style="margin-top: 12px;">
+                <button type="submit" class="btn btn-primary">Save Weights</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Suggestion Settings -->
+<div class="section">
+    <h2>Suggestion Settings</h2>
+    <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">
+        Control how suggestions are generated each month.
+    </p>
+    <div class="info-card">
+        <form method="post" action="/settings/suggestions">
+            <div class="param-grid">
+                <div class="param-item">
+                    <label class="param-label">Suggestions per batch</label>
+                    <input type="number" name="suggestion_suggestions_per_batch"
+                           value="{{ config.suggestions.suggestions_per_batch }}" min="1" max="50" class="param-input">
+                </div>
+                <div class="param-item">
+                    <label class="param-label">Min interactions threshold</label>
+                    <input type="number" name="suggestion_min_interactions_threshold"
+                           value="{{ config.suggestions.min_interactions_threshold }}" min="1" class="param-input">
+                </div>
+                <div class="param-item">
+                    <label class="param-label">Active days threshold</label>
+                    <input type="number" name="suggestion_active_days_threshold"
+                           value="{{ config.suggestions.active_days_threshold }}" min="1" class="param-input">
+                </div>
+                <div class="param-item">
+                    <label class="param-label">Recent suggestion cooldown (months)</label>
+                    <input type="number" name="suggestion_recent_suggestion_months"
+                           value="{{ config.suggestions.recent_suggestion_months }}" min="1" class="param-input">
+                </div>
+                <div class="param-item">
+                    <label class="param-label">Top picks count</label>
+                    <input type="number" name="suggestion_top_pick_count"
+                           value="{{ config.suggestions.top_pick_count }}" min="1" class="param-input">
+                </div>
+                <div class="param-item">
+                    <label class="param-label">Surprise picks count</label>
+                    <input type="number" name="suggestion_surprise_pick_count"
+                           value="{{ config.suggestions.surprise_pick_count }}" min="0" class="param-input">
+                </div>
+                <div class="param-item">
+                    <label class="param-label">Surprise pool size</label>
+                    <input type="number" name="suggestion_surprise_pool_size"
+                           value="{{ config.suggestions.surprise_pool_size }}" min="1" class="param-input">
+                </div>
+            </div>
+            <div style="margin-top: 12px;">
+                <button type="submit" class="btn btn-primary">Save Suggestion Settings</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Reset -->
+<div class="section" style="text-align: center; padding-top: 16px; border-top: 1px solid var(--border-color);">
+    <form method="post" action="/settings/reset" onsubmit="return confirm('Reset all settings to defaults? This cannot be undone.')">
+        <button type="submit" class="btn" style="color: var(--red);">Reset All to Defaults</button>
+    </form>
+</div>
+{% endblock %}

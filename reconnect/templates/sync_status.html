@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Reconnect - Sync Status{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Data Sync</h1>
+    <p class="page-subtitle">{{ contact_count }} contacts &middot; {{ interaction_count }} interactions</p>
+</div>
+
+{% if sync_running %}
+<div class="sync-progress">
+    <div class="sync-progress-spinner"></div>
+    <span id="sync-message">{{ sync_message }}</span>
+</div>
+<script>
+(function poll() {
+    setTimeout(function() {
+        fetch('/sync/status')
+            .then(r => r.json())
+            .then(data => {
+                document.getElementById('sync-message').textContent = data.message || '';
+                if (data.running) {
+                    poll();
+                } else {
+                    window.location.reload();
+                }
+            })
+            .catch(() => { setTimeout(poll, 3000); });
+    }, 1500);
+})();
+</script>
+{% elif sync_message %}
+<div class="sync-done">{{ sync_message }}</div>
+{% endif %}
+
+<div class="sync-grid">
+    <div class="sync-card">
+        <h3>iMessage</h3>
+        <p>{{ source_counts.get("imessage", 0) }} interactions imported</p>
+        {% for s in sources if s.source == "imessage" %}
+        <div class="prop-row">
+            <span class="prop-label">Last synced</span>
+            <span class="prop-value">{{ s.last_synced_at or "Never" }}</span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Status</span>
+            <span class="prop-value">{{ s.status }}</span>
+        </div>
+        {% endfor %}
+        <div style="display: flex; gap: 8px; margin-top: 12px;">
+            <form method="post" action="/sync/imessage" style="flex:1;">
+                <button type="submit" class="btn btn-full" {% if sync_running %}disabled{% endif %}>Sync iMessage</button>
+            </form>
+            <form method="post" action="/sync/imessage/backfill" style="flex:1;">
+                <button type="submit" class="btn btn-full" {% if sync_running %}disabled{% endif %}>Backfill Text</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="sync-card">
+        <h3>Apple Contacts</h3>
+        <p>Used for identity resolution (linking phones to emails)</p>
+        <form method="post" action="/sync/contacts" style="margin-top: 12px;">
+            <button type="submit" class="btn btn-full" {% if sync_running %}disabled{% endif %}>Import Contacts</button>
+        </form>
+    </div>
+
+    <div class="sync-card">
+        <h3>Gmail</h3>
+        {% if not gmail_status.deps_installed %}
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
+            Gmail dependencies not installed.
+        </p>
+        <p style="font-size: 12px; color: var(--text-tertiary);">
+            Run: <code>pip install reconnect[gmail]</code>
+        </p>
+        {% elif not gmail_status.has_credentials %}
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
+            To connect Gmail, set up OAuth credentials:
+        </p>
+        <ol style="font-size: 12px; color: var(--text-tertiary); padding-left: 20px; margin-bottom: 12px;">
+            <li>Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a></li>
+            <li>Create a Desktop App OAuth client</li>
+            <li>Enable the Gmail API</li>
+            <li>Download the credentials JSON</li>
+            <li>Save as <code>data/gmail_credentials.json</code></li>
+        </ol>
+        {% elif not gmail_status.has_token %}
+        <p style="font-size: 13px; color: var(--text-secondary); margin-bottom: 8px;">
+            Credentials found. Click below to authorize Gmail access.
+        </p>
+        <form method="post" action="/sync/gmail/setup" style="margin-top: 12px;">
+            <button type="submit" class="btn btn-primary btn-full">Connect Gmail</button>
+        </form>
+        {% else %}
+        <p>{{ source_counts.get("gmail", 0) }} interactions imported</p>
+        {% for s in sources if s.source == "gmail" %}
+        <div class="prop-row">
+            <span class="prop-label">Last synced</span>
+            <span class="prop-value">{{ s.last_synced_at or "Never" }}</span>
+        </div>
+        <div class="prop-row">
+            <span class="prop-label">Status</span>
+            <span class="prop-value">{{ s.status }}</span>
+        </div>
+        {% endfor %}
+        <form method="post" action="/sync/gmail" style="margin-top: 12px;">
+            <button type="submit" class="btn btn-full" {% if sync_running %}disabled{% endif %}>Sync Gmail</button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<div class="section">
+    <div class="info-card">
+        <div class="info-card-header">Full Sync</div>
+        <p style="font-size: 14px; color: var(--text-secondary); margin-bottom: 16px;">
+            Run the complete pipeline: import contacts, sync iMessage, resolve duplicates, and recalculate scores.
+        </p>
+        <form method="post" action="/sync/all">
+            <button type="submit" class="btn btn-primary" {% if sync_running %}disabled{% endif %}>Run Full Sync</button>
+        </form>
+    </div>
+</div>
+
+{% if contact_count == 0 and interaction_count == 0 and not sync_running %}
+<div class="getting-started">
+    <h3>Getting Started</h3>
+    <ol>
+        <li>Grant <strong>Full Disk Access</strong> to Terminal (or your Python binary) in System Settings &gt; Privacy &amp; Security &gt; Full Disk Access</li>
+        <li>Click <strong>"Run Full Sync"</strong> above to import your data</li>
+        <li>Go to the <a href="/">Dashboard</a> to see your suggestions</li>
+    </ol>
+</div>
+{% endif %}
+{% endblock %}
