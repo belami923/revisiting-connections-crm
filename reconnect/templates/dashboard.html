@@ -3,16 +3,48 @@
 
 {% block content %}
 <div class="page-header">
-    <h1 class="page-title">People to Reconnect With</h1>
-    <p class="page-subtitle">{{ month_label }} &mdash;
-    {% if suggestions %}
-        {{ responded }}/{{ total }} reviewed
-        {% if yes_count %} &middot; {{ yes_count }} reaching out{% endif %}
-        {% if no_count %} &middot; {{ no_count }} skipped{% endif %}
-    {% else %}
-        No suggestions yet
-    {% endif %}
-    </p>
+    <div class="page-header-row">
+        <div>
+            <h1 class="page-title">People to Reconnect With</h1>
+            <p class="page-subtitle">{{ month_label }} &mdash;
+            {% if suggestions %}
+                {{ responded }}/{{ total }} reviewed
+                {% if done_count %} &middot; {{ done_count }} reconnected{% endif %}
+                {% if yes_count %} &middot; {{ yes_count }} reaching out{% endif %}
+                {% if no_count %} &middot; {{ no_count }} skipped{% endif %}
+            {% else %}
+                No suggestions yet
+            {% endif %}
+            </p>
+        </div>
+        {% if suggestions %}
+        <form method="post" action="/suggestions/regenerate">
+            <button type="submit" class="btn btn-reshuffle" title="Get a fresh roster of suggestions">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+                Reshuffle
+            </button>
+        </form>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Reshuffle overlay -->
+<div class="reshuffle-overlay" id="reshuffleOverlay">
+    <div class="reshuffle-content">
+        <div class="op-scene">
+            <div class="op-sparkle" style="--i:0"></div>
+            <div class="op-sparkle" style="--i:1"></div>
+            <div class="op-sparkle" style="--i:2"></div>
+            <div class="op-sparkle" style="--i:3"></div>
+            <div class="op-flag">🏴‍☠️</div>
+            <div class="op-ship">⛵</div>
+            <div class="op-ocean">
+                <div class="op-wave op-wave-back"></div>
+                <div class="op-wave op-wave-front"></div>
+            </div>
+        </div>
+        <div class="reshuffle-text" id="reshuffleText">Gathering the crew&hellip;</div>
+    </div>
 </div>
 
 {% if suggestions %}
@@ -22,20 +54,45 @@
 
 <div class="suggestions-grid">
     {% for s in suggestions %}
-    <div class="suggestion-card {% if s.feedback == 'yes' %}card-yes{% elif s.feedback == 'no' %}card-no{% endif %}">
+    {% set colors = ["#3b82f6","#8b5cf6","#ec4899","#f97316","#06b6d4","#10b981","#f43f5e","#ef4444","#a855f7","#14b8a6"] %}
+    {% set avatar_color = colors[(s.contact_id or loop.index) % 10] %}
+    {% set initials = (s.first_name or s.display_name)[0:1] ~ (s.last_name or "")[0:1] %}
+    <div class="suggestion-card {% if s.reached_out_at %}card-done{% elif s.feedback == 'yes' %}card-yes{% elif s.feedback == 'no' %}card-no{% endif %}">
         <div class="card-header">
-            <div class="card-rank">#{{ s.rank }}</div>
+            <div class="card-avatar" style="background: {{ avatar_color }};">{{ initials|upper }}</div>
             <div class="card-name">
                 <a href="/contacts/{{ s.contact_id }}">{{ s.display_name }}</a>
             </div>
+            <div class="card-rank">#{{ s.rank }}</div>
         </div>
 
-        {% if s.primary_narrative %}
-        <div class="narrative">
-            {{ s.primary_narrative }}
-        </div>
+        {% if s.enrichment and s.enrichment.headline %}
+        <div class="relationship-headline">{{ s.enrichment.headline }}</div>
         {% endif %}
 
+        {% if s.enrichment and s.enrichment.total_by_source %}
+        <div class="comm-breakdown">
+            {% for src, cnt in s.enrichment.total_by_source.items() %}
+            <div class="comm-stat">
+                <span class="comm-stat-count">{{ cnt }}</span>
+                <span class="comm-stat-label">{% if src == 'imessage' %}texts{% elif src == 'gmail' %}emails{% elif src == 'calendar' %}events{% else %}{{ src }}{% endif %}</span>
+            </div>
+            {% endfor %}
+            {% if s.enrichment.silence_days is defined and s.enrichment.silence_days %}
+            <div class="comm-divider"></div>
+            <div class="comm-stat comm-stat-silence">
+                <span class="comm-stat-count">{% if s.enrichment.silence_days >= 365 %}{{ s.enrichment.silence_days // 365 }}y{% elif s.enrichment.silence_days >= 30 %}{{ s.enrichment.silence_days // 30 }}mo{% else %}{{ s.enrichment.silence_days }}d{% endif %}</span>
+                <span class="comm-stat-label">silent</span>
+            </div>
+            {% endif %}
+            {% if s.enrichment.days_known is defined and s.enrichment.days_known %}
+            <div class="comm-stat comm-stat-known">
+                <span class="comm-stat-count">{% if s.enrichment.days_known >= 365 %}{{ s.enrichment.days_known // 365 }}y{% else %}{{ s.enrichment.days_known // 30 }}mo{% endif %}</span>
+                <span class="comm-stat-label">known</span>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
         <div class="card-meta">
             <span>{{ s.total_interactions or 0 }} interactions</span>
             <span>&middot;</span>
@@ -43,20 +100,29 @@
                 {% if s.days_since_last %}({{ s.days_since_last }}d ago){% endif %}
             </span>
         </div>
+        {% endif %}
+
+        {% if s.primary_narrative %}
+        <div class="narrative">
+            {{ s.primary_narrative }}
+        </div>
+        {% endif %}
 
         <div class="identifiers">
             {% for ident in s.identifiers %}
             <span class="identifier-badge">{{ ident.identifier_value }}</span>
             {% endfor %}
-            {% if s.linkedin_url or s.twitter_url %}
+            {% set li_url = s.linkedin_url or (s.enrichment.linkedin_url if s.enrichment else none) %}
+            {% set tw_url = s.twitter_url or (s.enrichment.twitter_url if s.enrichment else none) %}
+            {% if li_url or tw_url %}
             <span class="social-links-inline">
-                {% if s.linkedin_url %}
-                <a href="{{ s.linkedin_url }}" target="_blank" class="social-link-icon" title="LinkedIn">
+                {% if li_url %}
+                <a href="{{ li_url }}" target="_blank" class="social-link-icon" title="LinkedIn">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M20.447 20.452h-3.554v-5.569c0-1.328-.027-3.037-1.852-3.037-1.853 0-2.136 1.445-2.136 2.939v5.667H9.351V9h3.414v1.561h.046c.477-.9 1.637-1.85 3.37-1.85 3.601 0 4.267 2.37 4.267 5.455v6.286zM5.337 7.433a2.062 2.062 0 01-2.063-2.065 2.064 2.064 0 112.063 2.065zm1.782 13.019H3.555V9h3.564v11.452zM22.225 0H1.771C.792 0 0 .774 0 1.729v20.542C0 23.227.792 24 1.771 24h20.451C23.2 24 24 23.227 24 22.271V1.729C24 .774 23.2 0 22.222 0h.003z"/></svg>
                 </a>
                 {% endif %}
-                {% if s.twitter_url %}
-                <a href="{{ s.twitter_url }}" target="_blank" class="social-link-icon" title="X / Twitter">
+                {% if tw_url %}
+                <a href="{{ tw_url }}" target="_blank" class="social-link-icon" title="X / Twitter">
                     <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
                 </a>
                 {% endif %}
@@ -64,29 +130,63 @@
             {% endif %}
         </div>
 
-        {% if s.enrichment and (s.enrichment.recent_subjects or s.enrichment.recent_messages or s.enrichment.total_by_source) %}
-        <div class="card-context">
-            {% if s.enrichment.total_by_source %}
-            <div class="source-breakdown">
-                {% for src, cnt in s.enrichment.total_by_source.items() %}
-                <span class="source-badge">
-                    {% if src == 'imessage' %}{{ cnt }} texts{% elif src == 'gmail' %}{{ cnt }} emails{% elif src == 'calendar' %}{{ cnt }} meetings{% else %}{{ cnt }} {{ src }}{% endif %}
-                </span>
+        {% set msgs = s.enrichment.recent_messages|default([]) if s.enrichment else [] %}
+        {% set subjs = s.enrichment.recent_subjects|default([]) if s.enrichment else [] %}
+        {% set events = s.enrichment.recent_events|default([]) if s.enrichment else [] %}
+        {% if msgs or subjs or events %}
+        <div class="recent-convos">
+            <div class="recent-convos-header">Recent interactions</div>
+            <div class="conversation-list">
+                {% for msg in msgs[:3] %}
+                <div class="convo-item">
+                    <span class="convo-source convo-source-imessage">💬 iMessage</span>
+                    <span class="convo-date">{{ msg.date if msg is mapping else "" }}</span>
+                    <span class="convo-text">&ldquo;{{ msg.text if msg is mapping else msg }}&rdquo;</span>
+                </div>
+                {% endfor %}
+                {% for subj in subjs[:3] %}
+                <div class="convo-item">
+                    <span class="convo-source convo-source-email">📧 Email</span>
+                    <span class="convo-date">{{ subj.date if subj is mapping else "" }}</span>
+                    <span class="convo-text">{{ subj.text if subj is mapping else subj }}</span>
+                </div>
+                {% endfor %}
+                {% for ev in events[:3] %}
+                <div class="convo-item">
+                    <span class="convo-source convo-source-calendar">📅 Calendar</span>
+                    <span class="convo-date">{{ ev.date if ev is mapping else "" }}</span>
+                    <span class="convo-text">{{ ev.text if ev is mapping else ev }}</span>
+                </div>
                 {% endfor %}
             </div>
-            {% endif %}
-            {% if s.enrichment.recent_subjects %}
-            <div class="recent-subjects">
-                <span class="context-label">Emails:</span>
-                {{ s.enrichment.recent_subjects[:3]|join(", ") }}
-            </div>
-            {% endif %}
-            {% if s.enrichment.recent_messages %}
-            <div class="recent-messages">
-                {% for msg in s.enrichment.recent_messages[:3] %}
-                <div class="message-snippet">&ldquo;{{ msg }}&rdquo;</div>
-                {% endfor %}
-            </div>
+            {% set total_items = msgs|length + subjs|length + events|length %}
+            {% if total_items > 9 %}
+            <details class="conversation-history">
+                <summary>Show {{ total_items - 9 }} more interactions</summary>
+                <div class="conversation-list">
+                    {% for msg in msgs[3:] %}
+                    <div class="convo-item">
+                        <span class="convo-source convo-source-imessage">💬 iMessage</span>
+                        <span class="convo-date">{{ msg.date if msg is mapping else "" }}</span>
+                        <span class="convo-text">&ldquo;{{ msg.text if msg is mapping else msg }}&rdquo;</span>
+                    </div>
+                    {% endfor %}
+                    {% for subj in subjs[3:] %}
+                    <div class="convo-item">
+                        <span class="convo-source convo-source-email">📧 Email</span>
+                        <span class="convo-date">{{ subj.date if subj is mapping else "" }}</span>
+                        <span class="convo-text">{{ subj.text if subj is mapping else subj }}</span>
+                    </div>
+                    {% endfor %}
+                    {% for ev in events[3:] %}
+                    <div class="convo-item">
+                        <span class="convo-source convo-source-calendar">📅 Calendar</span>
+                        <span class="convo-date">{{ ev.date if ev is mapping else "" }}</span>
+                        <span class="convo-text">{{ ev.text if ev is mapping else ev }}</span>
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
             {% endif %}
         </div>
         {% endif %}
@@ -103,20 +203,46 @@
         {% endif %}
 
         <div class="card-actions">
-            {% if s.feedback %}
-                {% if s.feedback == "yes" %}
+            {% if s.reached_out_at %}
+                {# Stage 3: Actually reached out — done! #}
+                <span class="feedback-badge done">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                    Reconnected {{ s.reached_out_at[:10] }}
+                </span>
+                <form method="post" action="/suggestions/{{ s.id }}/undo-reached-out" style="display:inline;">
+                    <button type="submit" class="btn btn-undo">Undo</button>
+                </form>
+            {% elif s.feedback == "yes" %}
+                {# Stage 2: Marked "reach out" but hasn't done it yet #}
                 <span class="feedback-badge yes">Reaching out</span>
-                {% else %}
+                <form method="post" action="/suggestions/{{ s.id }}/reached-out" style="display:inline;">
+                    <button type="submit" class="btn btn-done">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+                        I reached out
+                    </button>
+                </form>
+                <form method="post" action="/suggestions/{{ s.id }}/undo" style="display:inline;">
+                    <button type="submit" class="btn btn-undo">Undo</button>
+                </form>
+            {% elif s.feedback == "no" %}
                 <span class="feedback-badge no">Skipped</span>
-                {% endif %}
                 <form method="post" action="/suggestions/{{ s.id }}/undo" style="display:inline;">
                     <button type="submit" class="btn btn-undo">Undo</button>
                 </form>
             {% else %}
-            <form method="post" action="/suggestions/{{ s.id }}/feedback" style="display:flex; gap:8px; flex:1;">
-                <button type="submit" name="feedback" value="yes" class="btn btn-primary btn-full">Reach out</button>
-                <button type="submit" name="feedback" value="no" class="btn btn-full">Skip</button>
-            </form>
+                {# Stage 1: No action taken yet #}
+                <form method="post" action="/suggestions/{{ s.id }}/feedback" style="display:flex; gap:8px; flex:1;">
+                    <button type="submit" name="feedback" value="yes" class="btn btn-primary btn-full">Reach out</button>
+                </form>
+                <form method="post" action="/suggestions/{{ s.id }}/skip" class="skip-form">
+                    <select name="skip_type" class="skip-select" onchange="this.form.submit()">
+                        <option value="" disabled selected>Skip &darr;</option>
+                        <option value="3">Snooze 3 months</option>
+                        <option value="6">Snooze 6 months</option>
+                        <option value="12">Snooze 1 year</option>
+                        <option value="never">Never show again</option>
+                    </select>
+                </form>
             {% endif %}
         </div>
 
@@ -126,12 +252,6 @@
         </form>
     </div>
     {% endfor %}
-</div>
-
-<div class="actions-bar">
-    <form method="post" action="/suggestions/regenerate">
-        <button type="submit" class="btn">Regenerate suggestions</button>
-    </form>
 </div>
 
 {% else %}
@@ -146,4 +266,21 @@
     </div>
 </div>
 {% endif %}
+
+<script>
+(function() {
+    const form = document.querySelector('form[action="/suggestions/regenerate"]');
+    if (!form) return;
+
+    form.addEventListener("submit", function(e) {
+        e.preventDefault();
+        const overlay = document.getElementById("reshuffleOverlay");
+        overlay.classList.add("active");
+
+        setTimeout(() => {
+            form.submit();
+        }, 2000);
+    });
+})();
+</script>
 {% endblock %}

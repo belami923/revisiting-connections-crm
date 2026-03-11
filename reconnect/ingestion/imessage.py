@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import plistlib
 import sqlite3
 from datetime import datetime
 
@@ -36,7 +37,8 @@ SELECT
     h.service as service,
     m.is_from_me,
     m.cache_roomnames,
-    m.text
+    m.text,
+    m.attributedBody
 FROM message m
 LEFT JOIN handle h ON m.handle_id = h.ROWID
 WHERE m.ROWID > ?
@@ -45,6 +47,65 @@ ORDER BY m.ROWID ASC
 """
 
 BATCH_SIZE = 5000
+
+
+def extract_attributed_body_text(blob: bytes) -> str | None:
+    """Extract plain text from iMessage attributedBody typedstream.
+
+    Modern macOS stores message text in the attributedBody column
+    as an NSAttributedString serialized in Apple's typedstream format.
+    The text appears after a \\x01+ marker followed by a length encoding.
+    """
+    if not blob:
+        return None
+
+    try:
+        # Find NSString marker \x01+ followed by length-encoded text
+        idx = blob.find(b"\x01+")
+        if idx < 0:
+            return None
+
+        data = blob[idx + 2 :]
+        if not data:
+            return None
+
+        # Read length: single byte if < 128, otherwise multi-byte encoding
+        length_byte = data[0]
+        if length_byte == 0:
+            return None
+
+        text_start = 1
+        text_length = length_byte
+
+        # Handle multi-byte length encoding for longer messages
+        # If high bit is set, the length is encoded differently
+        if length_byte >= 0x80:
+            # Some variants use a 2/4 byte length after a marker
+            # Try reading as a 2-byte little-endian length
+            if len(data) >= 3:
+                text_length = int.from_bytes(data[1:3], "little")
+                text_start = 3
+            else:
+                return None
+
+        if text_start + text_length > len(data):
+            # Length extends past buffer - use what we have
+            text_length = len(data) - text_start
+
+        text = data[text_start : text_start + text_length].decode(
+            "utf-8", errors="ignore"
+        ).strip()
+
+        # Filter out garbage: if less than 50% printable, skip
+        if text:
+            printable = sum(1 for c in text if c.isprintable() or c in "\n\r\t")
+            if printable / max(len(text), 1) < 0.5:
+                return None
+
+        return text if text else None
+
+    except Exception:
+        return None
 
 
 def ingest_imessage() -> dict:
@@ -137,7 +198,11 @@ def ingest_imessage() -> dict:
                 )
 
                 # Build metadata with text snippet
-                text = (row["text"] or "")[:TEXT_SNIPPET_LENGTH]
+                # Try text column first, fall back to attributedBody
+                text = (row["text"] or "").strip()
+                if not text and row["attributedBody"]:
+                    text = extract_attributed_body_text(row["attributedBody"]) or ""
+                text = text[:TEXT_SNIPPET_LENGTH]
                 metadata = {"service": row["service"]}
                 if text.strip():
                     metadata["text"] = text
@@ -198,7 +263,8 @@ def backfill_message_text() -> dict:
     """Backfill text snippets for existing iMessage interactions.
 
     Re-reads the iMessage database and updates metadata_json for
-    interactions that are missing the 'text' field.
+    interactions that are missing the 'text' field.  Extracts from
+    both the ``text`` column and the ``attributedBody`` typedstream.
     """
     if not IMESSAGE_DB_PATH.exists():
         return {"status": "skipped", "reason": "database not found"}
@@ -210,6 +276,7 @@ def backfill_message_text() -> dict:
 
     app_conn = get_connection()
     updated = 0
+    no_text = 0
 
     try:
         # Get all iMessage interactions missing text
@@ -226,7 +293,6 @@ def backfill_message_text() -> dict:
         source_ids = {}
         for row in rows:
             sid = row["source_id"]
-            # Extract the ROWID from source_id like "imessage_12345"
             if sid and sid.startswith("imessage_"):
                 try:
                     rowid = int(sid.replace("imessage_", ""))
@@ -240,7 +306,11 @@ def backfill_message_text() -> dict:
         if not source_ids:
             return {"status": "ok", "updated": 0}
 
-        # Batch-read texts from iMessage DB
+        logger.info(
+            "Backfilling text for %d iMessage interactions", len(source_ids)
+        )
+
+        # Batch-read texts from iMessage DB (text + attributedBody)
         batch_size = 1000
         rowid_list = sorted(source_ids.keys())
 
@@ -248,14 +318,21 @@ def backfill_message_text() -> dict:
             batch = rowid_list[i : i + batch_size]
             placeholders = ",".join("?" * len(batch))
             im_rows = im_conn.execute(
-                f"SELECT ROWID, text FROM message WHERE ROWID IN ({placeholders})",
+                f"SELECT ROWID, text, attributedBody FROM message "
+                f"WHERE ROWID IN ({placeholders})",
                 batch,
             ).fetchall()
 
             for im_row in im_rows:
                 rowid = im_row[0]
-                text = (im_row[1] or "")[:TEXT_SNIPPET_LENGTH].strip()
+                # Try text column first, fall back to attributedBody
+                text = (im_row[1] or "").strip()
+                if not text and im_row[2]:
+                    text = extract_attributed_body_text(im_row[2]) or ""
+
+                text = text[:TEXT_SNIPPET_LENGTH].strip()
                 if not text:
+                    no_text += 1
                     continue
 
                 info = source_ids[rowid]
@@ -273,13 +350,21 @@ def backfill_message_text() -> dict:
                 updated += 1
 
             app_conn.commit()
+            if i % 10000 == 0 and i > 0:
+                logger.info(
+                    "Backfill progress: %d/%d processed, %d updated",
+                    i, len(rowid_list), updated,
+                )
 
     finally:
         im_conn.close()
         app_conn.close()
 
-    logger.info("Backfilled text for %d iMessage interactions", updated)
-    return {"status": "ok", "updated": updated}
+    logger.info(
+        "Backfilled text for %d iMessage interactions (%d had no text)",
+        updated, no_text,
+    )
+    return {"status": "ok", "updated": updated, "no_text": no_text}
 
 
 def _resolve_handle(

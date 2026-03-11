@@ -12,6 +12,7 @@ import random
 import sqlite3
 from datetime import date, datetime
 
+from reconnect.enrichment.social import enrich_contact
 from reconnect.config import (
     ACTIVE_DAYS_THRESHOLD,
     MIN_INTERACTIONS_THRESHOLD,
@@ -79,8 +80,8 @@ def generate_suggestions(month_label: str | None = None) -> dict:
             narratives = _get_narratives(conn, contact_id)
             primary = narratives[0] if narratives else None
 
-            # Build conversation context enrichment
-            enrichment = _build_enrichment(conn, contact_id)
+            # Build conversation context enrichment (skip live social lookups to stay fast)
+            enrichment = _build_enrichment(conn, contact_id, skip_social=True)
 
             conn.execute(
                 """
@@ -158,6 +159,7 @@ def _get_candidates(conn: sqlite3.Connection, cfg: dict | None = None) -> list[d
         FROM contacts c
         JOIN contact_scores cs ON c.id = cs.contact_id
         WHERE c.is_excluded = 0
+          AND (c.skip_until IS NULL OR c.skip_until < date('now'))
           AND cs.total_interactions >= ?
           AND cs.days_since_last >= ?
           AND cs.suggestion_score > 0
@@ -245,6 +247,55 @@ def _get_narratives(conn: sqlite3.Connection, contact_id: int) -> list[dict]:
     ]
 
 
+def get_replacement_candidate(
+    conn: sqlite3.Connection, exclude_contact_ids: list[int]
+) -> dict | None:
+    """Find a single replacement candidate not in the exclude list."""
+    cfg = get_effective_suggestion_config(conn)
+    min_ix = cfg.get("min_interactions_threshold", MIN_INTERACTIONS_THRESHOLD)
+    active_days = cfg.get("active_days_threshold", ACTIVE_DAYS_THRESHOLD)
+
+    if not exclude_contact_ids:
+        exclude_contact_ids = [0]
+
+    placeholders = ",".join("?" * len(exclude_contact_ids))
+    candidates = conn.execute(
+        f"""
+        SELECT c.id as contact_id, c.display_name, cs.suggestion_score
+        FROM contacts c
+        JOIN contact_scores cs ON c.id = cs.contact_id
+        WHERE c.is_excluded = 0
+          AND (c.skip_until IS NULL OR c.skip_until < date('now'))
+          AND cs.total_interactions >= ?
+          AND cs.days_since_last >= ?
+          AND cs.suggestion_score > 0
+          AND c.id NOT IN ({placeholders})
+        ORDER BY cs.suggestion_score DESC
+        LIMIT 10
+        """,
+        (min_ix, active_days, *exclude_contact_ids),
+    ).fetchall()
+
+    if not candidates:
+        return None
+
+    pick = dict(random.choice(candidates[: min(5, len(candidates))]))
+    cid = pick["contact_id"]
+
+    narratives = _get_narratives(conn, cid)
+    primary = narratives[0] if narratives else None
+    enrichment = _build_enrichment(conn, cid, skip_social=True)
+
+    return {
+        "contact_id": cid,
+        "display_name": pick["display_name"],
+        "score": pick["suggestion_score"],
+        "narratives": narratives,
+        "primary": primary,
+        "enrichment": enrichment,
+    }
+
+
 def _get_batch_summary(conn: sqlite3.Connection, batch_id: int) -> dict:
     """Get summary of an existing batch."""
     batch = conn.execute(
@@ -281,7 +332,7 @@ def _get_batch_summary(conn: sqlite3.Connection, batch_id: int) -> dict:
     }
 
 
-def _build_enrichment(conn: sqlite3.Connection, contact_id: int) -> dict:
+def _build_enrichment(conn: sqlite3.Connection, contact_id: int, *, skip_social: bool = False) -> dict:
     """Build conversation context enrichment for a suggestion.
 
     Pulls recent email subjects, iMessage snippets, and interaction breakdown.
@@ -291,10 +342,10 @@ def _build_enrichment(conn: sqlite3.Connection, contact_id: int) -> dict:
     # Recent email subjects from metadata_json
     email_rows = conn.execute(
         """
-        SELECT metadata_json FROM interactions
+        SELECT metadata_json, occurred_at FROM interactions
         WHERE contact_id = ? AND source = 'gmail'
         ORDER BY occurred_at DESC
-        LIMIT 5
+        LIMIT 50
         """,
         (contact_id,),
     ).fetchall()
@@ -305,12 +356,38 @@ def _build_enrichment(conn: sqlite3.Connection, contact_id: int) -> dict:
             try:
                 meta = json.loads(row["metadata_json"])
                 subj = meta.get("subject", "")
+                dt = row["occurred_at"][:10] if row["occurred_at"] else ""
                 if subj and subj not in subjects:
-                    subjects.append(subj)
+                    subjects.append({"text": subj, "date": dt})
             except (json.JSONDecodeError, TypeError):
                 pass
     if subjects:
-        enrichment["recent_subjects"] = subjects[:5]
+        enrichment["recent_subjects"] = subjects[:50]
+
+    # Recent calendar events from metadata_json
+    cal_rows = conn.execute(
+        """
+        SELECT metadata_json, occurred_at FROM interactions
+        WHERE contact_id = ? AND source = 'calendar'
+        ORDER BY occurred_at DESC
+        LIMIT 20
+        """,
+        (contact_id,),
+    ).fetchall()
+
+    events = []
+    for row in cal_rows:
+        if row["metadata_json"]:
+            try:
+                meta = json.loads(row["metadata_json"])
+                title = meta.get("title") or meta.get("summary") or meta.get("subject", "")
+                dt = row["occurred_at"][:10] if row["occurred_at"] else ""
+                if title:
+                    events.append({"text": title, "date": dt})
+            except (json.JSONDecodeError, TypeError):
+                pass
+    if events:
+        enrichment["recent_events"] = events[:20]
 
     # Recent iMessage text snippets
     msg_rows = conn.execute(
@@ -319,23 +396,26 @@ def _build_enrichment(conn: sqlite3.Connection, contact_id: int) -> dict:
         WHERE contact_id = ? AND source = 'imessage'
           AND metadata_json LIKE '%"text"%'
         ORDER BY occurred_at DESC
-        LIMIT 10
+        LIMIT 50
         """,
         (contact_id,),
     ).fetchall()
 
     messages = []
+    seen_texts = set()
     for row in msg_rows:
         if row["metadata_json"]:
             try:
                 meta = json.loads(row["metadata_json"])
                 text = meta.get("text", "").strip()
-                if text and len(text) > 5 and text not in messages:
-                    messages.append(text)
+                dt = row["occurred_at"][:10] if row["occurred_at"] else ""
+                if text and len(text) > 5 and text not in seen_texts:
+                    seen_texts.add(text)
+                    messages.append({"text": text, "date": dt})
             except (json.JSONDecodeError, TypeError):
                 pass
     if messages:
-        enrichment["recent_messages"] = messages[:5]
+        enrichment["recent_messages"] = messages[:50]
 
     # Last interaction date by source
     last_by_source = {}
@@ -368,5 +448,92 @@ def _build_enrichment(conn: sqlite3.Connection, contact_id: int) -> dict:
         total_by_source[row["source"]] = row["cnt"]
     if total_by_source:
         enrichment["total_by_source"] = total_by_source
+
+    # --- Relationship timeline stats ---
+    timeline = conn.execute(
+        """
+        SELECT MIN(occurred_at) as first_at, MAX(occurred_at) as last_at,
+               COUNT(*) as total
+        FROM interactions WHERE contact_id = ?
+        """,
+        (contact_id,),
+    ).fetchone()
+
+    if timeline and timeline["first_at"]:
+        first_dt = date.fromisoformat(timeline["first_at"][:10])
+        last_dt = date.fromisoformat(timeline["last_at"][:10])
+        today = date.today()
+
+        days_known = (today - first_dt).days
+        silence_days = (today - last_dt).days
+
+        enrichment["first_interaction_date"] = timeline["first_at"][:10]
+        enrichment["days_known"] = days_known
+        enrichment["silence_days"] = silence_days
+
+        # Build relationship headline
+        parts = []
+        if days_known >= 730:
+            parts.append(f"{days_known // 365} years of history")
+        elif days_known >= 90:
+            parts.append(f"Connected for {days_known // 30} months")
+
+        if silence_days >= 365:
+            years = silence_days // 365
+            parts.append(
+                f"off the radar for {years}+ year{'s' if years > 1 else ''}"
+            )
+        elif silence_days >= 60:
+            parts.append(f"quiet for {silence_days // 30} months")
+        elif silence_days >= 30:
+            parts.append("went quiet about a month ago")
+
+        if parts:
+            enrichment["headline"] = " \u2014 ".join(parts)
+
+    # Peak communication month
+    peak = conn.execute(
+        """
+        SELECT strftime('%Y-%m', occurred_at) as mo, COUNT(*) as cnt
+        FROM interactions WHERE contact_id = ?
+        GROUP BY mo ORDER BY cnt DESC LIMIT 1
+        """,
+        (contact_id,),
+    ).fetchone()
+    if peak and peak["mo"]:
+        enrichment["peak_month"] = peak["mo"]
+        enrichment["peak_count"] = peak["cnt"]
+
+    # Last conversation previews
+    if messages:
+        enrichment["last_message_preview"] = messages[0]["text"][:120]
+        enrichment["last_message_date"] = messages[0]["date"]
+    if subjects:
+        enrichment["last_subject_preview"] = subjects[0]["text"][:120]
+        enrichment["last_subject_date"] = subjects[0]["date"]
+
+    # Social profile enrichment (LinkedIn, Twitter) — skip if caller says so
+    if not skip_social:
+        try:
+            social = enrich_contact(contact_id, conn)
+            if social.get("linkedin_url"):
+                enrichment["linkedin_url"] = social["linkedin_url"]
+            if social.get("twitter_url"):
+                enrichment["twitter_url"] = social["twitter_url"]
+        except Exception as e:
+            logger.warning("Social enrichment failed for contact %d: %s", contact_id, e)
+    else:
+        # Still pull cached social data if available (instant, no network)
+        cached = conn.execute(
+            "SELECT data_json FROM enrichment_cache WHERE contact_id = ? AND source = 'social'",
+            (contact_id,),
+        ).fetchone()
+        if cached:
+            import json as _json
+            data = _json.loads(cached["data_json"])
+            if data.get("linkedin_url"):
+                enrichment["linkedin_url"] = data["linkedin_url"]
+            if data.get("twitter_url"):
+                enrichment["twitter_url"] = data["twitter_url"]
 
     return enrichment

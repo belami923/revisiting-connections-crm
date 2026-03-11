@@ -16,7 +16,7 @@ from reconnect.ingestion.gmail import ingest_gmail, is_gmail_configured, setup_g
 from reconnect.ingestion.imessage import ingest_imessage, backfill_message_text
 from reconnect.resolution.resolver import resolve_duplicates
 from reconnect.scoring.scorer import recalculate_all_scores
-from reconnect.scoring.suggester import generate_suggestions
+from reconnect.scoring.suggester import generate_suggestions, _build_enrichment
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,14 @@ def _run_sync_pipeline(steps: list[str]):
             logger.info("Sync: importing Gmail")
             ingest_gmail()
 
+        if "enrich_suggestions" in steps:
+            _sync_status["message"] = "Enriching suggestions with social profiles..."
+            logger.info("Sync: enriching suggestions")
+            _enrich_current_suggestions()
+            _sync_status = {"running": False, "message": "Enrichment complete!"}
+            logger.info("Sync: enrichment complete")
+            return
+
         _sync_status["message"] = "Resolving duplicates..."
         logger.info("Sync: resolving duplicates")
         resolve_duplicates()
@@ -73,6 +81,31 @@ def _run_sync_pipeline(steps: list[str]):
         _sync_status = {"running": False, "message": f"Sync error: {e}"}
     finally:
         _sync_lock.release()
+
+
+def _enrich_current_suggestions():
+    """Re-build enrichment (incl. social profiles) for all current suggestions."""
+    import json
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT id, contact_id FROM suggestions").fetchall()
+        for i, row in enumerate(rows):
+            _sync_status["message"] = (
+                f"Enriching suggestion {i + 1}/{len(rows)}..."
+            )
+            enrichment = _build_enrichment(conn, row["contact_id"])
+            conn.execute(
+                "UPDATE suggestions SET enrichment_json = ? WHERE id = ?",
+                (json.dumps(enrichment), row["id"]),
+            )
+            conn.commit()
+            logger.info(
+                "Enriched suggestion %d (contact %d): %s",
+                row["id"], row["contact_id"],
+                list(enrichment.keys()),
+            )
+    finally:
+        conn.close()
 
 
 def _start_sync(steps: list[str]):
@@ -167,6 +200,14 @@ def gmail_auth_status():
 def trigger_backfill():
     """Backfill message text for existing iMessage interactions."""
     _start_sync(["backfill_text"])
+    return RedirectResponse(url="/sync", status_code=303)
+
+
+
+@router.post("/enrich-suggestions")
+def trigger_enrich_suggestions():
+    """Enrich current suggestions with social profiles and updated conversation data."""
+    _start_sync(["enrich_suggestions"])
     return RedirectResponse(url="/sync", status_code=303)
 
 

@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}Reconnect - Never Show{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1 class="page-title">Never Show</h1>
+    <p class="page-subtitle">{{ total }} contact{{ "s" if total != 1 else "" }} excluded from suggestions</p>
+</div>
+
+{% if contacts %}
+<div class="never-show-list">
+    {% for c in contacts %}
+    <div class="never-show-item">
+        <div class="never-show-info">
+            <a href="/contacts/{{ c.id }}" class="never-show-name">{{ c.display_name }}</a>
+            <span class="never-show-meta">
+                {% if c.total_interactions %}{{ c.total_interactions }} interactions{% endif %}
+                {% if c.last_interaction_at %}&middot; Last: {{ c.last_interaction_at[:10] }}{% endif %}
+            </span>
+        </div>
+        <form method="post" action="/contacts/{{ c.id }}/restore">
+            <button type="submit" class="btn btn-restore">Restore</button>
+        </form>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <h3>No excluded contacts</h3>
+    <p>Contacts you mark as "Never show again" will appear here. You can restore them at any time.</p>
+</div>
+{% endif %}
+{% endblock %}

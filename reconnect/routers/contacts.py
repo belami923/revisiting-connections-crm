@@ -128,6 +128,45 @@ def update_socials(
     return RedirectResponse(url=f"/contacts/{contact_id}", status_code=303)
 
 
+@router.get("/never-show", response_class=HTMLResponse)
+def never_show_list(request: Request):
+    """List all contacts marked as never show."""
+    conn = get_connection()
+    try:
+        rows = conn.execute(
+            """
+            SELECT c.*, cs.total_interactions, cs.last_interaction_at
+            FROM contacts c
+            LEFT JOIN contact_scores cs ON c.id = cs.contact_id
+            WHERE c.is_excluded = 1
+            ORDER BY c.display_name
+            """
+        ).fetchall()
+        contacts = [dict(row) for row in rows]
+        return templates.TemplateResponse(
+            request,
+            "never_show.html",
+            {"contacts": contacts, "total": len(contacts)},
+        )
+    finally:
+        conn.close()
+
+
+@router.post("/{contact_id}/restore")
+def restore_contact(contact_id: int):
+    """Remove a contact from the never-show list."""
+    conn = get_connection()
+    try:
+        conn.execute(
+            "UPDATE contacts SET is_excluded = 0, skip_until = NULL, updated_at = datetime('now') WHERE id = ?",
+            (contact_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return RedirectResponse(url="/contacts/never-show", status_code=303)
+
+
 @router.get("/{contact_id}", response_class=HTMLResponse)
 def contact_detail(request: Request, contact_id: int):
     """Show detail view for a single contact."""

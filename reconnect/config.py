@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 # Project root
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# Data directory (runtime data, gitignored)
-DATA_DIR = PROJECT_ROOT / "data"
+# Data directory (runtime data, gitignored) — overridable via env var
+DATA_DIR = Path(os.environ.get("RECONNECT_DATA_DIR", PROJECT_ROOT / "data"))
 DATA_DIR.mkdir(exist_ok=True)
 
 # App database

@@ -1,7 +1,7 @@
-"""Social profile auto-lookup via DuckDuckGo search.
+"""Social profile auto-lookup via Brave Search.
 
 Finds LinkedIn and X.com profiles for contacts using their name and email.
-Uses DuckDuckGo HTML search (no API key needed) with BeautifulSoup parsing.
+Uses Brave Search with BeautifulSoup parsing.
 Results are cached in the enrichment_cache table to avoid re-searching.
 """
 
@@ -15,7 +15,7 @@ import time
 
 logger = logging.getLogger(__name__)
 
-_THROTTLE_DELAY = 1.5  # seconds between searches
+_THROTTLE_DELAY = 2.0  # seconds between searches
 
 
 def _check_deps() -> bool:
@@ -28,79 +28,84 @@ def _check_deps() -> bool:
         return False
 
 
+_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.5",
+}
+
+
+def _search_brave(query: str) -> list[str]:
+    """Search Brave and return result URLs."""
+    import requests
+    from bs4 import BeautifulSoup
+
+    try:
+        resp = requests.get(
+            "https://search.brave.com/search",
+            params={"q": query},
+            headers=_HEADERS,
+            timeout=10,
+        )
+        if resp.status_code != 200:
+            return []
+
+        soup = BeautifulSoup(resp.text, "html.parser")
+        urls = []
+        for a in soup.find_all("a", href=True):
+            href = a["href"]
+            if href.startswith("http"):
+                urls.append(href)
+        return urls
+    except Exception as e:
+        logger.debug("Brave search failed: %s", e)
+        return []
+
+
 def find_linkedin(name: str, email: str | None = None) -> str | None:
-    """Search DuckDuckGo for a LinkedIn profile.
+    """Search for a LinkedIn profile URL.
 
     Returns the first linkedin.com/in/ URL found, or None.
     """
     if not _check_deps():
         return None
 
-    import requests
-    from bs4 import BeautifulSoup
-
     query = f'"{name}" site:linkedin.com/in'
     if email:
         query += f" {email}"
 
-    try:
-        resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"},
-            timeout=10,
-        )
-        resp.raise_for_status()
-
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        for link in soup.select("a.result__a"):
-            href = link.get("href", "")
-            # DuckDuckGo wraps URLs, extract the actual URL
-            match = re.search(r"linkedin\.com/in/[\w\-]+", href)
-            if match:
-                return f"https://www.{match.group(0)}"
-
-    except Exception as e:
-        logger.warning("LinkedIn search failed for %s: %s", name, e)
+    urls = _search_brave(query)
+    for url in urls:
+        match = re.search(r"linkedin\.com/in/([\w\-]+)", url)
+        if match:
+            return f"https://www.linkedin.com/in/{match.group(1)}"
 
     return None
 
 
 def find_twitter(name: str, email: str | None = None) -> str | None:
-    """Search DuckDuckGo for an X/Twitter profile.
+    """Search for an X/Twitter profile URL.
 
     Returns the first x.com/ URL found, or None.
     """
     if not _check_deps():
         return None
 
-    import requests
-    from bs4 import BeautifulSoup
-
     query = f'"{name}" site:x.com'
     if email:
         query += f" {email}"
 
-    try:
-        resp = requests.get(
-            "https://html.duckduckgo.com/html/",
-            params={"q": query},
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"},
-            timeout=10,
-        )
-        resp.raise_for_status()
+    skip_handles = {"home", "search", "login", "i", "settings", "explore", "messages"}
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-
-        for link in soup.select("a.result__a"):
-            href = link.get("href", "")
-            match = re.search(r"x\.com/(\w+)", href)
-            if match and match.group(1).lower() not in ("home", "search", "login", "i"):
-                return f"https://x.com/{match.group(1)}"
-
-    except Exception as e:
-        logger.warning("Twitter search failed for %s: %s", name, e)
+    urls = _search_brave(query)
+    for url in urls:
+        match = re.search(r"x\.com/(\w+)", url)
+        if match and match.group(1).lower() not in skip_handles:
+            return f"https://x.com/{match.group(1)}"
 
     return None
 
@@ -121,7 +126,7 @@ def enrich_contact(contact_id: int, conn: sqlite3.Connection) -> dict:
 
     # Get contact info
     contact = conn.execute(
-        "SELECT display_name FROM contacts WHERE id = ?",
+        "SELECT display_name, first_name, last_name FROM contacts WHERE id = ?",
         (contact_id,),
     ).fetchone()
 
@@ -130,9 +135,22 @@ def enrich_contact(contact_id: int, conn: sqlite3.Connection) -> dict:
 
     name = contact["display_name"]
 
+    # Skip contacts whose name is just a phone number or a single word handle
+    if re.match(r"^[\+\d\s\-\(\)]+$", name):
+        logger.debug("Skipping social lookup for phone-number contact: %s", name)
+        result = {"linkedin_url": None, "twitter_url": None}
+        conn.execute(
+            "INSERT OR REPLACE INTO enrichment_cache (contact_id, source, data_json, fetched_at) "
+            "VALUES (?, 'social', ?, datetime('now'))",
+            (contact_id, json.dumps(result)),
+        )
+        conn.commit()
+        return result
+
     # Get email if available
     email_row = conn.execute(
-        "SELECT identifier_value FROM contact_identifiers WHERE contact_id = ? AND identifier_type = 'email' LIMIT 1",
+        "SELECT identifier_value FROM contact_identifiers "
+        "WHERE contact_id = ? AND identifier_type = 'email' LIMIT 1",
         (contact_id,),
     ).fetchone()
     email = email_row["identifier_value"] if email_row else None
@@ -152,14 +170,17 @@ def enrich_contact(contact_id: int, conn: sqlite3.Connection) -> dict:
 
     # Cache result
     conn.execute(
-        "INSERT OR REPLACE INTO enrichment_cache (contact_id, source, data_json, fetched_at) VALUES (?, 'social', ?, datetime('now'))",
+        "INSERT OR REPLACE INTO enrichment_cache (contact_id, source, data_json, fetched_at) "
+        "VALUES (?, 'social', ?, datetime('now'))",
         (contact_id, json.dumps(result)),
     )
 
     # Update contact record
     if result["linkedin_url"] or result["twitter_url"]:
         conn.execute(
-            "UPDATE contacts SET linkedin_url = COALESCE(?, linkedin_url), twitter_url = COALESCE(?, twitter_url), updated_at = datetime('now') WHERE id = ?",
+            "UPDATE contacts SET linkedin_url = COALESCE(?, linkedin_url), "
+            "twitter_url = COALESCE(?, twitter_url), updated_at = datetime('now') "
+            "WHERE id = ?",
             (result["linkedin_url"], result["twitter_url"], contact_id),
         )
 

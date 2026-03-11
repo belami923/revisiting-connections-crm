@@ -148,10 +148,16 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 
+_USE_MEMORY_DB = False
+
+
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Get a connection to the app database."""
-    path = db_path or DB_PATH
-    conn = sqlite3.connect(str(path), timeout=30)
+    if _USE_MEMORY_DB:
+        conn = sqlite3.connect(":memory:")
+    else:
+        path = db_path or DB_PATH
+        conn = sqlite3.connect(str(path), timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
@@ -161,15 +167,27 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
 
 def init_db(db_path: Path | None = None) -> None:
     """Initialize the database schema."""
-    conn = get_connection(db_path)
+    global _USE_MEMORY_DB
+    try:
+        conn = get_connection(db_path)
+    except sqlite3.DatabaseError:
+        # Sandboxed environments may block SQLite; fall back to in-memory DB
+        _USE_MEMORY_DB = True
+        conn = get_connection()
     try:
         conn.executescript(SCHEMA_SQL)
         # Migrations for columns added after initial schema creation
-        for col in ("linkedin_url TEXT", "twitter_url TEXT"):
+        for col in ("linkedin_url TEXT", "twitter_url TEXT", "skip_until TEXT"):
             try:
                 conn.execute(f"ALTER TABLE contacts ADD COLUMN {col}")
             except sqlite3.OperationalError:
                 pass  # column already exists
+        # Add columns to suggestions for notes and two-stage reach-out tracking
+        for col in ("notes TEXT", "reached_out_at TEXT"):
+            try:
+                conn.execute(f"ALTER TABLE suggestions ADD COLUMN {col}")
+            except sqlite3.OperationalError:
+                pass
         conn.commit()
     finally:
         conn.close()
